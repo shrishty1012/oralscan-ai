@@ -7,9 +7,12 @@ import base64
 import os
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 import io
 from PIL import Image
+import jwt
+from functools import wraps
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__, static_folder='../frontend', static_url_path='')
 CORS(app)
@@ -19,18 +22,16 @@ MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', 'Oral Cancer Dataset'
 model = tf.keras.models.load_model(MODEL_PATH)
 IMG_SIZE = 224
 
-# ── Simple JSON "database" ───────────────────────────────────────────────────
-DB_PATH = os.path.join(os.path.dirname(__file__), 'db.json')
+# ── MongoDB Database ─────────────────────────────────────────────────────────
+from pymongo import MongoClient
 
-def load_db():
-    if not os.path.exists(DB_PATH):
-        return {"scans": [], "users": {}}
-    with open(DB_PATH, 'r') as f:
-        return json.load(f)
+# Initialize MongoDB connection
+client = MongoClient('mongodb://localhost:27017/')
+db = client['oral_cancer_db']
+scans_collection = db['scans']
+users_collection = db['users']
 
-def save_db(data):
-    with open(DB_PATH, 'w') as f:
-        json.dump(data, f, indent=2)
+app.config['SECRET_KEY'] = 'oralscan_super_secret_key_123'
 
 # ── Image preprocessing ──────────────────────────────────────────────────────
 def preprocess_image(img_array):
@@ -61,6 +62,68 @@ def predict(img_array):
         "raw":        round(float(raw), 4)
     }
 
+# ── Auth Middleware & Routes ─────────────────────────────────────────────────
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        if 'Authorization' in request.headers:
+            parts = request.headers['Authorization'].split()
+            if len(parts) == 2 and parts[0] == 'Bearer':
+                token = parts[1]
+        
+        if not token:
+            return jsonify({'error': 'Token is missing!'}), 401
+            
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+            current_user = users_collection.find_one({'_id': data['user_id']})
+            if not current_user:
+                raise Exception("User not found")
+        except:
+            return jsonify({'error': 'Token is invalid!'}), 401
+            
+        return f(current_user, *args, **kwargs)
+    return decorated
+
+@app.route('/api/auth/signup', methods=['POST'])
+def signup():
+    data = request.get_json()
+    if not data or not data.get('email') or not data.get('password') or not data.get('name'):
+        return jsonify({'error': 'Missing required fields'}), 400
+        
+    if users_collection.find_one({'email': data['email']}):
+        return jsonify({'error': 'User already exists'}), 400
+        
+    hashed_password = generate_password_hash(data['password'])
+    user_id = str(uuid.uuid4())
+    
+    users_collection.insert_one({
+        '_id': user_id,
+        'name': data['name'],
+        'email': data['email'],
+        'password': hashed_password
+    })
+    
+    return jsonify({'message': 'User created successfully', 'user_id': user_id, 'name': data['name']}), 201
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    if not data or not data.get('email') or not data.get('password'):
+        return jsonify({'error': 'Missing credentials'}), 400
+        
+    user = users_collection.find_one({'email': data['email']})
+    if not user or not check_password_hash(user['password'], data['password']):
+        return jsonify({'error': 'Invalid credentials'}), 401
+        
+    token = jwt.encode({
+        'user_id': user['_id'],
+        'exp': datetime.utcnow() + timedelta(hours=24)
+    }, app.config['SECRET_KEY'], algorithm="HS256")
+    
+    return jsonify({'token': token, 'name': user['name']}), 200
+
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 @app.route('/')
@@ -76,7 +139,8 @@ def health():
     return jsonify({"status": "ok", "model": "oral_cancer_model.h5", "version": "1.0"})
 
 @app.route('/api/predict/upload', methods=['POST'])
-def predict_upload():
+@token_required
+def predict_upload(current_user):
     """Accept an uploaded image file and return prediction."""
     if 'image' not in request.files:
         return jsonify({"error": "No image file provided"}), 400
@@ -97,8 +161,8 @@ def predict_upload():
     patient_age  = request.form.get('patient_age', 'N/A')
     patient_id   = request.form.get('patient_id', str(uuid.uuid4())[:8].upper())
 
-    db = load_db()
-    db["scans"].append({
+    scans_collection.insert_one({
+        "user_id":      current_user['_id'],
         "scan_id":      result["scan_id"],
         "patient_id":   patient_id,
         "patient_name": patient_name,
@@ -110,11 +174,11 @@ def predict_upload():
         "method":       result["method"],
         "timestamp":    result["timestamp"]
     })
-    save_db(db)
     return jsonify(result)
 
 @app.route('/api/predict/base64', methods=['POST'])
-def predict_base64():
+@token_required
+def predict_base64(current_user):
     """Accept a base64-encoded image (from live camera) and return prediction."""
     data = request.get_json()
     if not data or 'image' not in data:
@@ -138,8 +202,8 @@ def predict_base64():
     patient_age  = data.get('patient_age', 'N/A')
     patient_id   = data.get('patient_id',  str(uuid.uuid4())[:8].upper())
 
-    db = load_db()
-    db["scans"].append({
+    scans_collection.insert_one({
+        "user_id":      current_user['_id'],
         "scan_id":      result["scan_id"],
         "patient_id":   patient_id,
         "patient_name": patient_name,
@@ -151,16 +215,14 @@ def predict_base64():
         "method":       result["method"],
         "timestamp":    result["timestamp"]
     })
-    save_db(db)
     return jsonify(result)
 
 @app.route('/api/scans', methods=['GET'])
-def get_scans():
+@token_required
+def get_scans(current_user):
     """Return all scan results (dashboard data)."""
-    db = load_db()
-    scans = db.get("scans", [])
-    # Sort newest first
-    scans = sorted(scans, key=lambda x: x["timestamp"], reverse=True)
+    # Fetch all scans, excluding the MongoDB _id field, sorted by timestamp descending
+    scans = list(scans_collection.find({'user_id': current_user['_id']}, {'_id': 0, 'user_id': 0}).sort("timestamp", -1))
 
     total      = len(scans)
     suspicious = sum(1 for s in scans if s["label"] == "Suspicious")
@@ -177,19 +239,18 @@ def get_scans():
     })
 
 @app.route('/api/scans/<scan_id>', methods=['GET'])
-def get_scan(scan_id):
-    db = load_db()
-    for s in db.get("scans", []):
-        if s["scan_id"] == scan_id:
-            return jsonify(s)
+@token_required
+def get_scan(current_user, scan_id):
+    scan = scans_collection.find_one({"scan_id": scan_id, "user_id": current_user['_id']}, {'_id': 0, 'user_id': 0})
+    if scan:
+        return jsonify(scan)
     return jsonify({"error": "Scan not found"}), 404
 
 @app.route('/api/scans', methods=['DELETE'])
-def clear_scans():
-    db = load_db()
-    db["scans"] = []
-    save_db(db)
-    return jsonify({"message": "All scans cleared"})
+@token_required
+def clear_scans(current_user):
+    scans_collection.delete_many({"user_id": current_user['_id']})
+    return jsonify({"message": "All scans for the current user cleared"})
 
 if __name__ == '__main__':
     print("🦷 Oral Cancer Screening API starting...")

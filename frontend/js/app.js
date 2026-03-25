@@ -1,8 +1,10 @@
 // ── Config ──────────────────────────────────────────────────────────────────
 const API = 'http://localhost:5000/api';
 
-// ── State ────────────────────────────────────────────────────────────────────
-let currentPage  = 'home';
+// ── State & Auth ─────────────────────────────────────────────────────────────
+let authToken    = localStorage.getItem('token');
+let currentUser  = localStorage.getItem('userName');
+let currentPage  = authToken ? 'home' : 'auth';
 let stream       = null;
 let selectedFile = null;
 let historyChart = null;
@@ -12,10 +14,21 @@ const PROBE_KEYWORDS = ['endoscope', 'probe', 'usb camera', 'usb cam', 'inspecti
 
 // ── Nav ───────────────────────────────────────────────────────────────────────
 function showPage(pageId, linkEl) {
+  if (!authToken && pageId !== 'auth') {
+    pageId = 'auth';
+  }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
-  document.getElementById(`page-${pageId}`).classList.add('active');
-  if (linkEl) linkEl.classList.add('active');
+  
+  const pageTarget = document.getElementById(`page-${pageId}`);
+  if(pageTarget) pageTarget.classList.add('active');
+  
+  if (linkEl) {
+    linkEl.classList.add('active');
+  } else if (pageId !== 'auth') {
+    const activeLink = document.querySelector(`.nav-link[data-page="${pageId}"]`);
+    if (activeLink) activeLink.classList.add('active');
+  }
   currentPage = pageId;
   if (pageId === 'dashboard') loadDashboard();
   if (pageId === 'home')      loadHomeStats();
@@ -46,8 +59,9 @@ async function checkHealth() {
 
 // ── Home Stats ────────────────────────────────────────────────────────────────
 async function loadHomeStats() {
+  if (!authToken) return;
   try {
-    const r = await fetch(`${API}/scans`);
+    const r = await fetch(`${API}/scans`, { headers: { 'Authorization': 'Bearer ' + authToken } });
     const data = await r.json();
     const s = data.summary;
     document.getElementById('hs-total').textContent     = s.total;
@@ -189,7 +203,9 @@ async function captureAndPredict() {
       patient_id:   document.getElementById('patientId').value   || ''
     };
     const r    = await fetch(`${API}/predict/base64`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      method: 'POST', 
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken }, 
+      body: JSON.stringify(body)
     });
     const data = await r.json();
     if (data.error) throw new Error(data.error);
@@ -232,7 +248,11 @@ async function analyseUpload() {
     fd.append('patient_name', document.getElementById('patientName').value || 'Anonymous');
     fd.append('patient_age',  document.getElementById('patientAge').value  || 'N/A');
     fd.append('patient_id',   document.getElementById('patientId').value   || '');
-    const r    = await fetch(`${API}/predict/upload`, { method: 'POST', body: fd });
+    const r    = await fetch(`${API}/predict/upload`, { 
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + authToken },
+      body: fd 
+    });
     const data = await r.json();
     if (data.error) throw new Error(data.error);
     displayResult(data);
@@ -311,8 +331,9 @@ function hideResult() {
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 async function loadDashboard() {
+  if (!authToken) return;
   try {
-    const r    = await fetch(`${API}/scans`);
+    const r    = await fetch(`${API}/scans`, { headers: { 'Authorization': 'Bearer ' + authToken } });
     const data = await r.json();
     const s    = data.summary;
 
@@ -391,7 +412,10 @@ function renderChart(scans) {
 async function clearAllScans() {
   if (!confirm('Delete all scan records? This cannot be undone.')) return;
   try {
-    await fetch(`${API}/scans`, { method: 'DELETE' });
+    await fetch(`${API}/scans`, { 
+      method: 'DELETE',
+      headers: { 'Authorization': 'Bearer ' + authToken }
+    });
     showToast('All scans cleared', 'success');
     loadDashboard();
   } catch (e) {
@@ -417,10 +441,103 @@ function showToast(msg, type = '') {
   toastTimer = setTimeout(() => { t.classList.remove('show'); }, 3500);
 }
 
+// ── Auth ──────────────────────────────────────────────────────────────────────
+function switchAuthTab(tab) {
+  document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(`tab-${tab}`).classList.add('active');
+  document.getElementById('form-login').style.display = tab === 'login' ? 'block' : 'none';
+  document.getElementById('form-signup').style.display = tab === 'signup' ? 'block' : 'none';
+  document.getElementById('authSub').textContent = tab === 'login' ? 'Sign in to your account' : 'Create a new account';
+}
+
+async function handleLogin(e) {
+  e.preventDefault();
+  const email = document.getElementById('loginEmail').value;
+  const password = document.getElementById('loginPassword').value;
+  showLoading('Signing in...');
+  try {
+    const res = await fetch(`${API}/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Login failed');
+    
+    authToken = data.token;
+    currentUser = data.name;
+    localStorage.setItem('token', authToken);
+    localStorage.setItem('userName', currentUser);
+    
+    showToast('Signed in successfully', 'success');
+    updateNavAuth();
+    showPage('home');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+async function handleSignup(e) {
+  e.preventDefault();
+  const name = document.getElementById('signupName').value;
+  const email = document.getElementById('signupEmail').value;
+  const password = document.getElementById('signupPassword').value;
+  const confirm = document.getElementById('signupConfirm').value;
+  
+  if (password !== confirm) return showToast('Passwords do not match', 'error');
+  
+  showLoading('Creating account...');
+  try {
+    const res = await fetch(`${API}/auth/signup`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email, password })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Signup failed');
+    
+    showToast('Account created! Please log in.', 'success');
+    switchAuthTab('login');
+    document.getElementById('loginEmail').value = email;
+    document.getElementById('signupPassword').value = '';
+    document.getElementById('signupConfirm').value = '';
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+function logout() {
+  authToken = null;
+  currentUser = null;
+  localStorage.removeItem('token');
+  localStorage.removeItem('userName');
+  updateNavAuth();
+  showPage('auth');
+}
+
+function updateNavAuth() {
+  const authNav = document.getElementById('authNav');
+  const userDisp = document.getElementById('userNameDisplay');
+  const links = document.querySelectorAll('.nav-link');
+  
+  if (authToken) {
+    authNav.style.display = 'flex';
+    userDisp.textContent = currentUser;
+    links.forEach(l => l.style.display = 'block');
+  } else {
+    authNav.style.display = 'none';
+    links.forEach(l => l.style.display = 'none');
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  updateNavAuth();
+  showPage(currentPage);
   await checkHealth();
-  await loadHomeStats();
+  if (authToken) await loadHomeStats();
   // Re-check health every 30s
   setInterval(checkHealth, 30000);
 });

@@ -37,14 +37,69 @@
     <div class="nav-status">
       <span class="status-dot" id="apiStatus"></span>
       <span class="status-text" id="apiStatusText">Connecting…</span>
+      <div id="authNav" style="display:none; margin-left:1.5rem; align-items:center; gap:1rem; padding-left:1.5rem; border-left:1px solid var(--border);">
+        <span id="userNameDisplay" style="font-size:0.85rem; font-weight:600; color:var(--text);"></span>
+        <button class="btn btn-ghost btn-sm" onclick="logout()" style="padding:0.3rem 0.8rem; font-size:0.8rem;">Logout</button>
+      </div>
     </div>
   </nav>
 
   <!-- ── Pages ───────────────────────────────────────────────────── -->
   <main class="main-content">
 
+    <!-- AUTH PAGE -->
+    <section id="page-auth" class="page">
+      <div class="auth-container">
+        <div class="card auth-card">
+          <div class="auth-header">
+            <h2 class="auth-title">Welcome</h2>
+            <p class="auth-sub" id="authSub">Sign in to your account</p>
+          </div>
+          
+          <div class="auth-tabs">
+            <button class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')">Login</button>
+            <button class="auth-tab" id="tab-signup" onclick="switchAuthTab('signup')">Sign Up</button>
+          </div>
+
+          <!-- Login Form -->
+          <form id="form-login" onsubmit="handleLogin(event)">
+            <div class="form-group mb-3">
+              <label for="loginEmail">Email Address</label>
+              <input type="email" id="loginEmail" required placeholder="name@example.com" />
+            </div>
+            <div class="form-group mb-4">
+              <label for="loginPassword">Password</label>
+              <input type="password" id="loginPassword" required placeholder="••••••••" />
+            </div>
+            <button type="submit" class="btn btn-primary w-100 mt-2" id="btnLogin">Sign In</button>
+          </form>
+
+          <!-- Signup Form -->
+          <form id="form-signup" style="display:none;" onsubmit="handleSignup(event)">
+            <div class="form-group mb-3">
+              <label for="signupName">Full Name</label>
+              <input type="text" id="signupName" required placeholder="John Doe" />
+            </div>
+            <div class="form-group mb-3">
+              <label for="signupEmail">Email Address</label>
+              <input type="email" id="signupEmail" required placeholder="name@example.com" />
+            </div>
+            <div class="form-group mb-3">
+              <label for="signupPassword">Password</label>
+              <input type="password" id="signupPassword" required placeholder="••••••••" minlength="6" />
+            </div>
+            <div class="form-group mb-4">
+              <label for="signupConfirm">Confirm Password</label>
+              <input type="password" id="signupConfirm" required placeholder="••••••••" minlength="6" />
+            </div>
+            <button type="submit" class="btn btn-primary w-100 mt-2" id="btnSignup">Create Account</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
     <!-- HOME PAGE -->
-    <section id="page-home" class="page active">
+    <section id="page-home" class="page">
       <div class="hero">
         <div class="hero-badge">AI-Powered Screening</div>
         <h1 class="hero-title">Early Detection<br/><span class="gradient-text">Saves Lives</span></h1>
