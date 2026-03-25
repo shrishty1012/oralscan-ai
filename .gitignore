@@ -1,0 +1,13 @@
+node_modules/
+
+tf_env/
+__pycache__/
+*.pyc 
+
+.env 
+
+Oral Cancer Dataset/
+*.h5 
+
+.DS_Store
+Thumbs.db
