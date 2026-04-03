@@ -1,5 +1,5 @@
 // ── Config ──────────────────────────────────────────────────────────────────
-const API = 'http://localhost:5000/api';
+const API = 'https://PUT_YOUR_BACKEND_RENDER_URL_HERE.onrender.com/api';
 
 // ── State & Auth ─────────────────────────────────────────────────────────────
 let authToken    = localStorage.getItem('token');
