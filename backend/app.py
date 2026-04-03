@@ -26,7 +26,9 @@ IMG_SIZE = 224
 from pymongo import MongoClient
 
 # Initialize MongoDB connection
-client = MongoClient('mongodb://localhost:27017/')
+import os
+mongo_uri = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/')
+client = MongoClient(mongo_uri)
 db = client['oral_cancer_db']
 scans_collection = db['scans']
 users_collection = db['users']
