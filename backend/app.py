@@ -18,7 +18,7 @@ app = Flask(__name__, static_folder='../frontend', static_url_path='')
 CORS(app)
 
 # ── Load model ──────────────────────────────────────────────────────────────
-MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', 'Oral Cancer Dataset', 'oral_cancer_model.h5')
+MODEL_PATH = os.path.join(os.path.dirname(__file__), 'oral_cancer_model.h5')
 model = tf.keras.models.load_model(MODEL_PATH)
 IMG_SIZE = 224
 
